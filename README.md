@@ -1,11 +1,8 @@
-# qq - a tiny terminal AI CLI with persistent conversation history
+# qq
 
-By default, qq remembers previous messages so you can have an ongoing
-conversation across commands. Use -n (or --new) to start a fresh chat, and
--s (or --search) to force a live web search for the current question.
+A tiny AI assistant for your terminal.
 
-If you use the optional wrapper scripts, qqn is equivalent to "qq -n" and
-qqs is equivalent to "qq -s", so you don't need to type the flags manually.
+`qq` lets you chat directly from your shell and remembers conversation history across invocations, so every command continues where the last one left off. Use `-n` to start a fresh conversation and `-s` to force a live web search.
 
 ## Examples
 
