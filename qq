@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""
+qq - a tiny terminal AI assistant with persistent conversation history.
+
+By default, qq remembers previous messages so you can have an ongoing
+conversation across commands. Use -n (or --new) to start a fresh chat, and
+-s (or --search) to force a live web search for the current question.
+
+If you use the optional wrapper scripts, qqn is equivalent to "qq -n" and
+qqs is equivalent to "qq -s", so you don't need to type the flags manually.
+
+Examples:
+    qq what is the capital of france
+    qq "how do i undo my last git commit?"
+    qqs latest python release
+    qqn explain recursion            # start a new conversation
+    qq -n -s weather in tokyo        # new conversation + web search
+    qqn                              # clear saved conversation
+"""
+
+import sys
+import re
+import os
+import json
+import urllib.request
+
+# ---- Hard-code your Anthropic API key here ----
+API_KEY = "sk-ant-REPLACE-ME"
+MODEL = "claude-haiku-4-5-20251001"
+# ------------------------------------------------
+
+API_URL = "https://api.anthropic.com/v1/messages"
+HISTORY_FILE = os.path.expanduser("~/.qq_history.json")
+
+
+def clean_text(text: str) -> str:
+    """Collapse whitespace/newlines and remove space before punctuation (citation artifacts)."""
+    text = " ".join(text.split())
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+    return text.strip()
+
+
+def hyperlink(text: str, url: str) -> str:
+    """Return an OSC 8 clickable hyperlink (supported by iTerm2, Kitty, WezTerm, Ghostty, etc)."""
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+
+def load_history() -> list:
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_history(history: list) -> None:
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f)
+
+
+SYSTEM_PROMPT = (
+    "You are a terminal CLI assistant. This is a plain text terminal — it cannot render markdown. "
+    "Rules, no exceptions: "
+    "1) Never use **, *, #, or any markdown syntax. "
+    "2) Never use bullet points or numbered lists — write in plain flowing sentences. "
+    "3) Never leave a blank line — no double newlines, ever. "
+    "4) Be genuinely concise: 1-3 sentences for most questions, more only if truly necessary. "
+    "5) Prefix your entire response with '👉🏻 ' and continue directly after it on the same line."
+)
+
+SEARCH_PROMPT = (
+    "You are a terminal CLI assistant. This is a plain text terminal — it cannot render markdown. "
+    "Rules, no exceptions: "
+    "1) Never use **, *, #, or any markdown syntax. "
+    "2) Never use bullet points or numbered lists — write in plain flowing sentences. "
+    "3) Never leave a blank line — no double newlines, ever. "
+    "4) Be genuinely concise: 1-3 sentences for most questions, more only if truly necessary. "
+    "5) Before searching, on its own line, briefly say what you're checking, prefixed with '💭 ' — "
+    "keep this to a short phrase, not a full sentence. "
+    "6) After searching, give your final answer prefixed with '👉🏻 ' and continue directly after it on the same line. "
+    "You MUST perform a web search for this query."
+)
+
+
+def ask(history: list, system_prompt: str = SYSTEM_PROMPT):
+    """Returns (raw_text_or_None, display_text). raw is None on error."""
+    if API_KEY == "sk-ant-REPLACE-ME" or not API_KEY:
+        return None, "Error: set your API_KEY at the top of this script first."
+
+    payload = {
+        "model": MODEL,
+        "max_tokens": 1024,
+        "system": system_prompt,
+        "messages": history,
+        "tools": [
+            {
+                "type": "web_search_20250305",
+                "name": "web_search"
+            }
+        ],
+    }
+
+    req = urllib.request.Request(
+        API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "content-type": "application/json",
+            "x-api-key": API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        return None, f"API error {e.code}: {body}"
+    except Exception as e:
+        return None, f"Request failed: {e}"
+
+    content = data.get("content", [])
+
+    # web_search is a server-side tool: the API resolves all search rounds
+    # in this single response. Text blocks after the last tool-related block
+    # are the real final answer; anything before is just narration/thinking.
+    last_tool_idx = -1
+    for i, b in enumerate(content):
+        if b.get("type") in ("server_tool_use", "tool_use", "web_search_tool_result"):
+            last_tool_idx = i
+
+    searched = last_tool_idx != -1
+    thinking_blocks = [b for b in content[:last_tool_idx + 1] if b.get("type") == "text" and b.get("text", "").strip()]
+    answer_blocks = [b for b in content[last_tool_idx + 1:] if b.get("type") == "text" and b.get("text", "").strip()]
+
+    thinking_text = clean_text(" ".join(b.get("text", "").strip() for b in thinking_blocks))
+    thinking_text = thinking_text.replace("👉🏻", "").replace("💭", "").strip()
+
+    answer = clean_text(" ".join(b.get("text", "").strip() for b in answer_blocks))
+    answer = answer.replace("👉🏻", "").replace("💭", "").strip()
+
+    sources = []
+    seen = set()
+    for b in answer_blocks:
+        for c in b.get("citations", []) or []:
+            url = c.get("url")
+            title = c.get("title", url)
+            if url and url not in seen:
+                seen.add(url)
+                sources.append((title, url))
+
+    display_lines = []
+    if searched and thinking_text:
+        display_lines.append(f"💭 {thinking_text}")
+    display_lines.append(f"👉🏻 {answer}")
+    display = "\n".join(display_lines)
+
+    if sources:
+        display += "\n\nSources:\n" + "\n".join(
+            f"- {title}: {url}" for title, url in sources
+        )
+
+    raw = answer  # what we store back into history
+    return raw, display
+
+
+def main():
+    args = sys.argv[1:]
+    reset = False
+    force_search = False
+
+    if args and args[0] in ("-n", "--new"):
+        reset = True
+        args = args[1:]
+
+    if args and args[0] in ("-s", "--search"):
+        force_search = True
+        args = args[1:]
+
+    history = [] if reset else load_history()
+
+    if not args:
+        if reset:
+            save_history([])
+            print("👉🏻 context reset")
+        else:
+            print("Usage: qq [-n] [-s] <your question>")
+        return
+
+    question = " ".join(args)
+    history.append({"role": "user", "content": question})
+
+    system_prompt = SEARCH_PROMPT if force_search else SYSTEM_PROMPT
+    raw, display = ask(history, system_prompt)
+    if raw is None:
+        history.pop()  # don't save a dangling turn on error
+    else:
+        history.append({"role": "assistant", "content": raw})
+
+    save_history(history)
+    print(display)
+
+
+if __name__ == "__main__":
+    main()
+
