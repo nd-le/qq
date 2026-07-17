@@ -1,4 +1,4 @@
-# qq - a tiny terminal AI assistant with persistent conversation history.
+# qq - a tiny terminal AI CLI with persistent conversation history
 
 By default, qq remembers previous messages so you can have an ongoing
 conversation across commands. Use -n (or --new) to start a fresh chat, and
@@ -6,6 +6,24 @@ conversation across commands. Use -n (or --new) to start a fresh chat, and
 
 If you use the optional wrapper scripts, qqn is equivalent to "qq -n" and
 qqs is equivalent to "qq -s", so you don't need to type the flags manually.
+
+## Examples
+
+```bash
+qq what is the capital of france
+qq "how do I squash git commits?"
+qqs latest python release
+qqn explain recursion            # start a new conversation
+qq -n -s weather in tokyo        # new conversation + web search
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `-n` | Start a new conversation |
+| `-s` | Force a web search |
+
 
 ## Requirements
 
@@ -70,24 +88,7 @@ and
 exec qq -s "$@"
 ```
 
-## Examples
-
-```bash
-qq what is the capital of france
-    qq "how do i undo my last git commit"
-    qqs latest python release
-    qqn explain recursion            # start a new conversation
-    qq -n -s weather in tokyo        # new conversation + web search
-```
-
-## Flags
-
-| Flag | Description |
-|------|-------------|
-| `-n` | Start a new conversation |
-| `-s` | Force a web search |
-
-Conversation history is stored in:
+## Conversation history is stored in
 
 ```
 ~/.qq_history.json
