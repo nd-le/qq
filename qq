@@ -40,11 +40,6 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def hyperlink(text: str, url: str) -> str:
-    """Return an OSC 8 clickable hyperlink (supported by iTerm2, Kitty, WezTerm, Ghostty, etc)."""
-    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
-
-
 def load_history() -> list:
     if os.path.exists(HISTORY_FILE):
         try:
